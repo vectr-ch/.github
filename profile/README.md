@@ -13,11 +13,14 @@ flowchart TB
         PG[(PostgreSQL)]
         VK[(Valkey)]
         NATS[(NATS JetStream)]
+        DW[(Data Warehouse)]
 
         Browser -->|"HTTP"| FM
         FM -->|"tRPC"| FMS
         FMS --- PG
         FMS --- VK
+        NATS -->|"subscribe"| FM
+        NATS -->|"subscribe"| DW
     end
 
     subgraph Gateway["Gateway Boundary"]
@@ -35,7 +38,7 @@ flowchart TB
 
         BS --- MESH
         MESH --- NODE
-        NODE ---  FC
+        NODE --- FC
     end
 
     GW <-->|"mTLS gRPC (bidir stream)"| BS
@@ -45,7 +48,7 @@ flowchart TB
 
 ### Data flows
 
-- **Telemetry** (high frequency): FC → Node → Base → Gateway → NATS JetStream → consumers
+- **Telemetry** (high frequency): FC → Node → Base → Gateway → NATS JetStream → Fleet Manager (real-time) + Data Warehouse (storage)
 - **Commands**: Browser → Fleet Manager → FMS → Gateway → Base → Node → FC
 - **Acknowledgments**: Node → Base → Gateway → FMS
 
