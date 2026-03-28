@@ -1,53 +1,78 @@
 # VECTR
 
-A platform for remotely controlling and autonomously operating drones.
+A platform for drone fleet management, real-time telemetry, and autonomous operations.
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph Cloud["Cloud Infrastructure"]
+        Browser["Browser"]
+        FM["Fleet Manager (Next.js)"]
+        FMS["Fleet Manager Server (Go / Gin)"]
+        PG[(PostgreSQL)]
+        VK[(Valkey)]
+        NATS[(NATS JetStream)]
+
+        Browser -->|"HTTP"| FM
+        FM -->|"tRPC"| FMS
+        FMS --- PG
+        FMS --- VK
+    end
+
+    subgraph Gateway["Gateway Boundary"]
+        GW["Gladus Gateway (Go / gRPC)"]
+    end
+
+    FMS -->|"gRPC (command dispatch)"| GW
+    GW -->|"publish telemetry"| NATS
+
+    subgraph Hardware["Hardware / Edge"]
+        BS["Base Station (Go)"]
+        MESH["Transport (WiFi / Reticulum mesh)"]
+        NODE["Drone Node (Go on Raspberry Pi)"]
+        FC["Flight Controller (MSP / MAVLink)"]
+
+        BS --- MESH
+        MESH --- NODE
+        NODE ---  FC
+    end
+
+    GW <-->|"mTLS gRPC (bidir stream)"| BS
 ```
-Drone
-├── Flight Controller (Betaflight)   ←— MSP over Serial
-└── Raspberry Pi
-    ├── node          (Go)           ←— commands / telemetry
-    └── reticulum-bridge (Python)    ←— Unix socket ↕ WiFi
 
-                    ↕ WiFi / Reticulum mesh
+**Gladus** is the gateway boundary — everything above it is cloud infrastructure, everything below is hardware.
 
-Base Station
-├── reticulum-bridge (Python)        ←— WiFi ↕ Unix socket
-└── base             (Go)            ←— gRPC ↓
+### Data flows
 
-                    ↕ gRPC / TCP
+- **Telemetry** (high frequency): FC → Node → Base → Gateway → NATS JetStream → consumers
+- **Commands**: Browser → Fleet Manager → FMS → Gateway → Base → Node → FC
+- **Acknowledgments**: Node → Base → Gateway → FMS
 
-Infrastructure
-└── gateway          (Go)            ←— browser UI + WebSocket bridge
-```
+## Repositories
 
-The **Reticulum bridge** (`rns_bridge.py` in `proto`) is a Python process running on both the drone and the base station. It handles all wireless mesh networking over the local WiFi link and exposes a Unix socket to the Go binaries on each side. This keeps the Go code transport-agnostic — UDP and Reticulum are both supported today.
+| Repo | Stack | Description |
+|------|-------|-------------|
+| [fleet-manager](https://github.com/vectr-ch/fleet-manager) | Next.js 16, React 19, Tailwind, tRPC | Web dashboard for fleet operators. Dark-themed UI with real-time maps, telemetry, and fleet management. |
+| [fleet-manager-server](https://github.com/vectr-ch/fleet-manager-server) | Go, Gin, GORM, PostgreSQL, Valkey | Central platform API. Multi-tenant RBAC, device enrollment PKI, mTLS certificate lifecycle, MFA/TOTP. |
+| [gladus](https://github.com/vectr-ch/gladus) | Go, gRPC, NATS JetStream, Prometheus | Gateway service. Bridges cloud to hardware via mTLS bidirectional streams. Publishes telemetry to NATS, routes commands to base stations. |
+| [proto](https://github.com/vectr-ch/proto) | Protobuf, buf | Single source of truth for all message and gRPC service definitions. Generated Go code consumed by all Go services. |
+| [edge](https://github.com/vectr-ch/edge) | Go, gRPC, MSP, MAVLink | On-device binaries. `node/` runs on drones (Raspberry Pi, ARM64), `base/` runs on ground stations. Pluggable transport layer (UDP, VectRNet/Reticulum mesh). |
+| [terragen](https://github.com/vectr-ch/terragen) | Docker Compose, OpenTofu, GitHub Actions | Infrastructure, CI/CD pipelines, and deployment configs. |
 
-The **`DroneControl` gRPC service** defines the full operator API: streaming stick inputs, flight commands (arm, disarm, set mode, return home), emergency stop, and a live telemetry stream (attitude, position, battery, flight mode).
-
-## Repository
-
-All edge and infrastructure code lives in a single monorepo:
-
-| Repo | Description |
-|------|-------------|
-| [edge](https://github.com/vectr-ch/edge) | Monorepo containing `node/` (drone), `base/` (ground station), `gateway/` (operator UI), `proto/` (shared protobuf + transport), and `deploy/` (ops scripts). |
-
-## Hardware (Phase 1)
+## Hardware
 
 | Role | Hardware |
 |------|----------|
-| Flight controller | Betaflight FC |
-| On-board computer | Raspberry Pi (possible upgrade to Jetson Nano for on-board inference) |
-| Wireless link | WiFi antenna via Reticulum mesh |
+| Flight controller | Betaflight FC, iNav FC, ArduPilot (Pixhawk / CubeOrange) |
+| On-board computer | Raspberry Pi (planned upgrade to Jetson for on-board inference) |
+| Wireless link | WiFi via Reticulum mesh (VectRNet) |
 | Base station | Linux machine with WiFi antenna |
 
 ## Roadmap
 
 | Phase | Focus |
 |-------|-------|
-| 1 — now | Manual remote control with real-time stick inputs |
-| 2 | Waypoint missions, richer FC protocol (MAVLink / PX4) |
+| 1 | Manual remote control with real-time stick inputs |
+| 2 — now | Multi-FC support (ArduPilot MAVLink, iNav MSPv2), fleet management platform, waypoint missions, GPS-guided flight |
 | 3 | Autonomous operation with on-board inference |
